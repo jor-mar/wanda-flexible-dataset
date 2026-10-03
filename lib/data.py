@@ -16,6 +16,7 @@ class TokenizerWrapper:
         self.input_ids = input_ids
 
 # Load and process wikitext2 dataset
+"""
 def get_wikitext2(nsamples, seed, seqlen, tokenizer):
     # Load train and test datasets
     traindata = load_dataset('wikitext', 'wikitext-2-raw-v1', split='train')
@@ -36,8 +37,55 @@ def get_wikitext2(nsamples, seed, seqlen, tokenizer):
         tar[:, :-1] = -100
         trainloader.append((inp, tar))
     return trainloader, testenc
+"""
+def get_wikitext2(nsamples, seed, seqlen, tokenizer):
+
+    traindata = load_dataset(
+        "parquet",
+        data_files="https://huggingface.co/datasets/Salesforce/wikitext/resolve/main/wikitext-2-raw-v1/train-00000-of-00001.parquet",
+        split="train"
+    )
+
+    testdata = load_dataset(
+        "parquet",
+        data_files="https://huggingface.co/datasets/Salesforce/wikitext/resolve/main/wikitext-2-raw-v1/test-00000-of-00001.parquet",
+        split="train"
+    )
+
+    trainenc = tokenizer(
+        " ".join(traindata["text"]),
+        return_tensors="pt"
+    )
+
+    testenc = tokenizer(
+        "\n\n".join(testdata["text"]),
+        return_tensors="pt"
+    )
+
+    random.seed(seed)
+
+    trainloader = []
+
+    for _ in range(nsamples):
+
+        i = random.randint(
+            0,
+            trainenc.input_ids.shape[1] - seqlen
+        )
+
+        j = i + seqlen
+
+        inp = trainenc.input_ids[:, i:j]
+
+        tar = inp.clone()
+        tar[:, :-1] = -100
+
+        trainloader.append((inp, tar))
+
+    return trainloader, testenc
 
 # Load and process c4 dataset
+"""
 def get_c4(nsamples, seed, seqlen, tokenizer):
     # Load train and validation datasets
     traindata = load_dataset('allenai/c4', 'allenai--c4', data_files={'train': 'en/c4-train.00000-of-01024.json.gz'}, split='train')
@@ -64,6 +112,43 @@ def get_c4(nsamples, seed, seqlen, tokenizer):
     valenc = valenc.input_ids[:, :(256 * seqlen)]
     valenc = TokenizerWrapper(valenc)
     return trainloader, valenc
+"""
+def get_c4(nsamples, seed, seqlen, tokenizer):
+
+    traindata = load_dataset(
+        "json",
+        data_files="https://huggingface.co/datasets/allenai/c4/resolve/main/en/c4-train.00000-of-01024.json.gz",
+        split="train"
+    )
+
+    random.seed(seed)
+    trainloader = []
+
+    for _ in range(nsamples):
+
+        while True:
+            i = random.randint(0, len(traindata) - 1)
+
+            trainenc = tokenizer(
+                traindata[i]["text"],
+                return_tensors="pt"
+            )
+
+            if trainenc.input_ids.shape[1] >= seqlen:
+                break
+
+        max_start = trainenc.input_ids.shape[1] - seqlen
+
+        start = random.randint(0, max_start)
+
+        inp = trainenc.input_ids[:, start:start + seqlen]
+
+        tar = inp.clone()
+        tar[:, :-1] = -100
+
+        trainloader.append((inp, tar))
+
+    return trainloader, None
 
 # Function to select the appropriate loader based on dataset name
 def get_loaders(name, nsamples=128, seed=0, seqlen=2048, tokenizer=None):
