@@ -121,13 +121,26 @@ def prune_magnitude(args, model, tokenizer, device=torch.device("cuda:0"), prune
 
             W[W_mask] = 0
 
-def prune_wanda(args, model, tokenizer, device=torch.device("cuda:0"), prune_n=0, prune_m=0):
+# def prune_wanda(args, model, tokenizer, device=torch.device("cuda:0"), prune_n=0, prune_m=0):
+def prune_wanda(args, model, tokenizer, device=torch.device("cuda:0"), prune_n=0, prune_m=0, dataloader=None):
     use_cache = model.config.use_cache 
     model.config.use_cache = False 
 
+    """
     print("loading calibdation data")
     dataloader, _ = get_loaders(args.calib_dataset,nsamples=args.nsamples,seed=args.seed,seqlen=model.seqlen,tokenizer=tokenizer)
     print("dataset loading complete")
+    """
+    if dataloader is None:
+        print("loading calibdation data")
+        dataloader, _ = get_loaders(
+            args.calib_dataset,
+            nsamples=args.nsamples,
+            seed=args.seed,
+            seqlen=model.seqlen,
+            tokenizer=tokenizer
+        )
+        print("dataset loading complete")
     with torch.no_grad():
         inps, outs, attention_mask = prepare_calibration_input(model, dataloader, device)
 

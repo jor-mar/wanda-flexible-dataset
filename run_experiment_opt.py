@@ -4,6 +4,8 @@ import os
 import numpy as np
 import torch
 from transformers import AutoTokenizer
+from datasets import load_dataset
+import random
 
 from main_opt import get_llm
 from lib.prune_opt import prune_wanda, check_sparsity
@@ -48,6 +50,81 @@ def save_result(csv_path, model_name, sparsity, dataset, seed, ppl):
             ppl
         ])
 
+def load_calibration_datasets():
+    print("Loading C4 dataset...")
+    c4_data = load_dataset(
+        "json",
+        data_files="https://huggingface.co/datasets/allenai/c4/resolve/main/en/c4-train.00000-of-01024.json.gz",
+        split="train"
+    )
+
+    print("Loading WikiText-2 dataset...")
+    wikitext_data = load_dataset(
+        "parquet",
+        data_files="https://huggingface.co/datasets/Salesforce/wikitext/resolve/main/wikitext-2-raw-v1/train-00000-of-00001.parquet",
+        split="train"
+    )
+
+    return c4_data, wikitext_data
+
+
+def get_calibration_data(dataset, data, nsamples, seed, seqlen, tokenizer):
+
+    random.seed(seed)
+
+    trainloader = []
+
+    if dataset == "c4":
+
+        for _ in range(nsamples):
+
+            while True:
+                i = random.randint(0, len(data) - 1)
+
+                trainenc = tokenizer(
+                    data[i]["text"],
+                    return_tensors="pt"
+                )
+
+                if trainenc.input_ids.shape[1] >= seqlen:
+                    break
+
+            max_start = trainenc.input_ids.shape[1] - seqlen
+            start = random.randint(0, max_start)
+
+            inp = trainenc.input_ids[:, start:start + seqlen]
+
+            tar = inp.clone()
+            tar[:, :-1] = -100
+
+            trainloader.append((inp, tar))
+
+        return trainloader
+
+    else:
+
+        trainenc = tokenizer(
+            " ".join(data["text"]),
+            return_tensors="pt"
+        )
+
+        for _ in range(nsamples):
+
+            i = random.randint(
+                0,
+                trainenc.input_ids.shape[1] - seqlen
+            )
+
+            j = i + seqlen
+
+            inp = trainenc.input_ids[:, i:j]
+
+            tar = inp.clone()
+            tar[:, :-1] = -100
+
+            trainloader.append((inp, tar))
+
+        return trainloader
 
 def run_experiment(
     model,
@@ -57,7 +134,8 @@ def run_experiment(
     args,
     dataset,
     seed,
-    csv_path
+    csv_path,
+    calibration_datasets
 ):
 
     print("\n" + "=" * 70)
@@ -73,13 +151,23 @@ def run_experiment(
     args.calib_dataset = dataset
     args.seed = seed
 
+    calib_data = get_calibration_data(
+        dataset,
+        calibration_datasets[dataset],
+        args.nsamples,
+        seed,
+        model.seqlen,
+        tokenizer
+    )
+
     prune_wanda(
         args,
         model,
         tokenizer,
         device,
         prune_n=0,
-        prune_m=0
+        prune_m=0,
+        dataloader=calib_data
     )
 
     sparsity = check_sparsity(model)
@@ -227,6 +315,16 @@ def main():
         use_fast=False
     )
 
+    print("\nLoading calibration datasets...")
+    c4_data, wikitext_data = load_calibration_datasets()
+
+    calibration_datasets = {
+        "c4": c4_data,
+        "wikitext2": wikitext_data
+    }
+
+    print("Calibration datasets loaded.")
+
     device = torch.device("cuda:0")
 
     if "model.embed_tokens" in model.hf_device_map:
@@ -253,7 +351,8 @@ def main():
                 args=args,
                 dataset=dataset,
                 seed=seed,
-                csv_path=csv_path
+                csv_path=csv_path,
+                calibration_datasets=calibration_datasets
             )
 
     print("\n" + "=" * 70)
